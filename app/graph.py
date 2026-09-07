@@ -57,9 +57,15 @@ def after_executor(state: StateType) -> str:
 
 def after_reviewer(state: StateType) -> str:
     phase = state.get("phase", "")
-    logger.info(f"after_reviewer: phase={phase}")
+    retry_count = state.get("retry_count", 0)
+    max_retries = state.get("max_retries", 3)
+    logger.info(f"after_reviewer: phase={phase}, retry_count={retry_count}/{max_retries}")
     if phase == "error":
         return "__end__"
+    # Self-healing: route back to executor for retry instead of router
+    if phase == "executing" and retry_count > 0 and retry_count <= max_retries:
+        logger.info(f"after_reviewer: self-healing retry to executor")
+        return "executor"
     return "router"
 
 

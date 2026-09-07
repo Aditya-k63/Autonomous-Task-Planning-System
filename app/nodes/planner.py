@@ -24,7 +24,7 @@ RULES:
 2. Define dependencies explicitly — which tasks must complete before others.
 3. Prioritize tasks (low/medium/high/critical).
 4. If the goal requires information you don't have, add a task that uses the web_search tool.
-5. Keep task count reasonable: 2-8 tasks for most goals.
+5. Keep task count reasonable: 2-12 tasks maximum. Never exceed 12 tasks.
 6. Do NOT ask clarifying questions — just make reasonable assumptions.
 
 RESPOND WITH ONLY valid JSON (no markdown, no explanation):
@@ -40,6 +40,7 @@ RESPOND WITH ONLY valid JSON (no markdown, no explanation):
 }}
 
 Available tools: {tools}
+MAX_TASKS: 12. If the LLM returns more than 12 tasks, truncate to the first 12.
 """
 
 PLANNER_RESPONSE_SCHEMA = """{{
@@ -150,6 +151,11 @@ def _planner_node_inner(state: AgentState) -> dict:
             status=TaskStatus.PENDING,
         )
         tasks.append(task)
+
+    # Enforce hard max of 12 tasks
+    if len(tasks) > 12:
+        logger.warning(f"PLANNER: Truncated {len(tasks)} tasks to 12 max")
+        tasks = tasks[:12]
 
     logger.info(f"PLANNER: step 11 - created {len(tasks)} tasks")
 

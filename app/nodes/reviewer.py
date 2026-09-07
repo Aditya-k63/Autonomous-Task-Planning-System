@@ -29,11 +29,13 @@ RESPOND WITH ONLY valid JSON:
   "pass": true/false,
   "score": 0.0-1.0,
   "reason": "brief explanation",
-  "suggestion": "if failed, what should be tried differently"
+  "suggestion": "if failed, what should be tried differently",
+  "retry": true/false
 }}
 
 Be lenient — if the task is substantially complete, mark it as passing.
-Only fail if the task clearly did not achieve its purpose."""
+Only fail if the task clearly did not achieve its purpose.
+If a task failed but can be retried with a different approach, set "retry": true."""
 
 
 def reviewer_node(state: AgentState) -> dict:
@@ -105,6 +107,16 @@ Did this task succeed? Respond with JSON only."""),
 
     logger.info(f"REVIEWER: pass={passed}, score={score:.2f}, reason={reason[:100]}")
 
+    # Determine if self-healing retry is needed
+    retry_needed = False
+    suggestion = ""
+    if not passed:
+        try:
+            retry_needed = data.get("retry", False)
+            suggestion = data.get("suggestion", "")
+        except Exception:
+            pass
+
     # Update task status
     tasks = state.get("tasks", [])
     for i, t in enumerate(tasks):
@@ -113,9 +125,16 @@ Did this task succeed? Respond with JSON only."""),
             if passed:
                 tasks[i]["status"] = TaskStatus.COMPLETED.value
                 tasks[i]["result"] = reason
+                tasks[i]["error"] = None
             else:
-                tasks[i]["status"] = TaskStatus.FAILED.value
-                tasks[i]["error"] = reason
+                if retry_needed and state["retry_count"] < state["max_retries"]:
+                    tasks[i]["status"] = TaskStatus.PENDING.value
+                    tasks[i]["error"] = f"{reason} | Retrying (attempt {state['retry_count'] + 1}/{state['max_retries']})"
+                    state["retry_count"] = state["retry_count"] + 1
+                    logger.info(f"REVIEWER: Self-healing retry for task {current_task.id}")
+                else:
+                    tasks[i]["status"] = TaskStatus.FAILED.value
+                    tasks[i]["error"] = reason
             break
 
     history = state.get("execution_history", [])
@@ -126,6 +145,11 @@ Did this task succeed? Respond with JSON only."""),
         success=passed,
     ).model_dump())
 
-    state["tasks"] = tasks
+    if retry_needed and not passed and state["retry_count"] <= state["max_retries"]:
+        state["phase"] = AgentPhase.EXECUTING.value
+        state["retry_count"] = state["retry_count"] + 1
+    else:
+        state["tasks"] = tasks
+
     state["execution_history"] = history
     return state
