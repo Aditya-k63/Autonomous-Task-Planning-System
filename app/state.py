@@ -81,6 +81,20 @@ class Step(BaseModel):
     )
 
 
+class PermissionEvent(BaseModel):
+    """A record of one permission decision, used for auditing and metrics."""
+
+    task_id: str
+    tool: str
+    input: str
+    decision: str
+    reason: str
+    blast_radius: str = "none"
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
 # --- Graph State ---
 
 class AgentState(dict):
@@ -102,6 +116,7 @@ class AgentState(dict):
             "max_retries": 3,
             "pending_clarification": None,
             "clarification_history": [],
+            "permission_events": [],
             "phase": AgentPhase.IDLE,
             "error": None,
         }
