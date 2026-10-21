@@ -30,11 +30,17 @@ BASELINE_SUMMARY = RESULTS_DIR / "baseline.json"
 REPORT_PATH = RESULTS_DIR / "report.md"
 
 
-def _run(label: str, fault=None, limit: int | None = None) -> tuple:
+def _run(label: str, fault=None, limit: int | None = None, oracle: bool = False):
     print(f"[eval] running '{label}' over {limit or len(TASKS)} tasks...", flush=True)
-    results = run_suite(TASKS, fault=fault, limit=limit)
+    if oracle:
+        from eval.oracle import use_oracle
+
+        with use_oracle():
+            results = run_suite(TASKS, fault=fault, limit=limit)
+    else:
+        results = run_suite(TASKS, fault=fault, limit=limit)
     summary = summarize(results, label=label, fault=fault.name if fault else None)
-    save_results(results, RESULTS_DIR / f"{label}.json")
+    save_results(results, RESULTS_DIR / f"{label}_details.json")
     save_summary(summary, RESULTS_DIR / f"{label}.json")
     print(
         f"[eval] {label}: {summary.success}/{summary.total} "
@@ -54,6 +60,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, help="only run the first N tasks")
     parser.add_argument("--report", action="store_true", help="render the Markdown report")
     parser.add_argument("--list-faults", action="store_true", help="list fault names")
+    parser.add_argument(
+        "--oracle",
+        action="store_true",
+        help="use the scripted reference solver instead of a live model",
+    )
     args = parser.parse_args(argv)
 
     if args.list_faults:
@@ -72,28 +83,35 @@ def main(argv: list[str] | None = None) -> int:
             if summary:
                 fault_summaries.append(summary)
         candidate = load_summary(RESULTS_DIR / "candidate.json")
-        text = render_report(baseline, fault_summaries, candidate)
+        text = render_report(baseline, fault_summaries, candidate, oracle=args.oracle)
         write_report(text, REPORT_PATH)
         print(f"[eval] report written to {REPORT_PATH}")
         return 0
 
     baseline_summary = None
     if args.baseline or not args.fault and not args.all_faults:
-        _, baseline_summary = _run("baseline", limit=args.limit)
+        _, baseline_summary = _run("baseline", limit=args.limit, oracle=args.oracle)
 
     if args.fault:
         fault = fault_by_name(args.fault)
         if fault is None:
             print(f"[eval] unknown fault '{args.fault}'", file=sys.stderr)
             return 2
-        _, summary = _run(f"fault_{fault.name}", fault=fault, limit=args.limit)
+        _, summary = _run(
+            f"fault_{fault.name}", fault=fault, limit=args.limit, oracle=args.oracle
+        )
         if baseline_summary:
             print("[eval] delta:", json.dumps(compare(baseline_summary, summary), indent=2))
         return 0
 
     if args.all_faults:
         for fault in ALL_FAULTS:
-            _run(f"fault_{fault.name}", fault=fault, limit=args.limit)
+            _run(
+                f"fault_{fault.name}",
+                fault=fault,
+                limit=args.limit,
+                oracle=args.oracle,
+            )
         return 0
 
     return 0

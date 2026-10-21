@@ -11,8 +11,10 @@ the duration of a single run, then restored.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import random
+import threading
 import time
 import traceback
 from contextlib import contextmanager
@@ -25,6 +27,9 @@ from app.workspace import reset_workspace, set_workspace
 
 from eval.faults import ALL_FAULTS, Fault
 from eval.tasks import Task
+
+# A single task may not exceed this many seconds.
+TASK_TIMEOUT_SECONDS = 90.0
 
 
 @dataclass
@@ -92,13 +97,13 @@ def apply_fault(fault: Fault | None, rng: random.Random) -> Iterator[None]:
             registry_module.Tool.execute = original_execute
         return
 
-    # LLM scope — patch every node module that imported the helper.
+    # LLM scope — patch the executor only. The planner must keep working,
+    # otherwise every task dies at step 0 and the fault measures nothing
+    # about execution robustness.
     patched_modules = []
-    for module_name in ("executor", "planner", "reviewer"):
-        module = __import__(f"app.nodes.{module_name}", fromlist=["*"])
-        original = getattr(module, "invoke_with_fallback", None)
-        if original is None:
-            continue
+    module = __import__("app.nodes.executor", fromlist=["*"])
+    original = getattr(module, "invoke_with_fallback", None)
+    if original is not None:
 
         def make_llm_wrapper(bound_original, _fault=fault):
             def wrapper(messages, settings=None, max_retries=3):
@@ -124,20 +129,48 @@ def apply_fault(fault: Fault | None, rng: random.Random) -> Iterator[None]:
 # ---------------------------------------------------------------------------
 
 
-def _run_graph(goal: str, max_steps: int) -> tuple[dict, list[str]]:
-    """Drive the agent graph to completion and return the final state."""
+def _run_graph(goal: str, max_steps: int, timeout_s: float | None = None) -> tuple[dict, list[str]]:
+    """
+    Drive the agent graph to completion and return the final state.
+
+    The graph runs on a worker thread so a task that hangs is recorded as
+    a timeout instead of stalling the whole suite.
+    """
     from app.graph import get_graph
     from app.state import AgentState
 
-    graph = get_graph()
-    state = AgentState(goal=goal, max_retries=3)
-    config = {"recursion_limit": 60}
-    final = graph.invoke(dict(state), config)
-    trace = [
-        f"{s.get('action')}:{s.get('tool', '-')}"
-        for s in final.get("execution_history", [])
-    ]
-    return final, trace
+    def _work() -> tuple[dict, list[str]]:
+        graph = get_graph()
+        state = AgentState(goal=goal, max_retries=3)
+        final = graph.invoke(dict(state), {"recursion_limit": 60})
+        trace = [
+            f"{s.get('action')}:{s.get('tool', '-')}"
+            for s in final.get("execution_history", [])
+        ]
+        return final, trace
+
+    if timeout_s is None:
+        return _work()
+
+    outcome: dict = {}
+
+    def _target() -> None:
+        try:
+            outcome["value"] = _work()
+        except Exception as exc:  # pragma: no cover - defensive
+            outcome["error"] = exc
+
+    # A thread starts with a fresh context, so the workspace override
+    # (a ContextVar) would be lost. Copy the current context across.
+    ctx = contextvars.copy_context()
+    worker = threading.Thread(target=lambda: ctx.run(_target), daemon=True)
+    worker.start()
+    worker.join(timeout_s)
+    if worker.is_alive():
+        raise TimeoutError(f"task exceeded {timeout_s:.0f}s")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
 
 
 def run_task(
@@ -158,7 +191,7 @@ def run_task(
         task.prepare(root)
         started = time.perf_counter()
         with apply_fault(fault, rng):
-            final, trace = _run_graph(task.prompt, task.max_steps)
+            final, trace = _run_graph(task.prompt, task.max_steps, TASK_TIMEOUT_SECONDS)
         wall_ms = int((time.perf_counter() - started) * 1000)
 
         passed, detail = task.verify(root)

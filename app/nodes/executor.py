@@ -196,6 +196,7 @@ def _executor_inner(state: dict) -> dict:
             except (json.JSONDecodeError, Exception) as e:
                 logger.error(f"Failed to parse CLARIFY: {e}")
                 messages.append(AIMessage(content=f"Invalid CLARIFY format. Use valid JSON. Error: {e}"))
+                steps_taken += 1
                 continue
 
         # Check for TOOL_CALL
@@ -225,6 +226,10 @@ def _executor_inner(state: dict) -> dict:
             except (json.JSONDecodeError, KeyError) as e:
                 logger.error(f"Failed to parse TOOL_CALL: {e}")
                 messages.append(AIMessage(content=f"Invalid format. Use: TOOL_CALL: {{\"tool\": \"name\", \"input\": \"arg\"}}"))
+                # Count the malformed attempt against the step budget.
+                # Without this a model that keeps emitting bad JSON
+                # loops forever and the run never terminates.
+                steps_taken += 1
                 continue
         else:
             # LLM gave text response — ask it to use tools
