@@ -23,6 +23,7 @@ benchmarks/results/*.csv
 # --- Workspace / sandbox ---
 workspace/
 sandbox/
+.eval_workspace/
 *.log
 
 # --- Editors / OS ---
