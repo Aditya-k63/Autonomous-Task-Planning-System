@@ -46,10 +46,13 @@ class Tool:
 
     def execute(self, input_text: str) -> str:
         try:
-            return self.func(input_text)
+            result = self.func(input_text)
         except Exception as e:
             logger.error("Tool '%s' failed: %s", self.name, e)
             return f"ERROR: {e}"
+        # Tools are contracted to return a string; coerce so a misbehaving
+        # tool cannot break the dispatch layer.
+        return result if isinstance(result, str) else str(result)
 
 
 class CircuitBreaker:
@@ -224,9 +227,11 @@ class ToolRegistry:
         return last_output
 
 
-def _is_failure(output: str) -> bool:
+def _is_failure(output: object) -> bool:
     """Treat an output starting with ERROR: as a tool failure."""
-    return bool(output) and output.lstrip().upper().startswith("ERROR:")
+    if not isinstance(output, str):
+        return False
+    return output.lstrip().upper().startswith("ERROR:")
 
 
 registry = ToolRegistry()
