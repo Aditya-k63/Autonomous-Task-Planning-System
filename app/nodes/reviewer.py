@@ -11,7 +11,7 @@ import logging
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.state import AgentState, Task, TaskStatus, AgentPhase, Step
-from app.llm import get_llm, invoke_with_retry
+from app.llm import get_llm, invoke_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,6 @@ If a task failed but can be retried with a different approach, set "retry": true
 def reviewer_node(state: AgentState) -> dict:
     """Review the current task's completion. Returns partial state update."""
     logger.info("REVIEWER: Reviewing task completion")
-    llm = get_llm()
 
     # Get current task safely
     tasks_raw = state.get("tasks", [])
@@ -75,7 +74,7 @@ Execution history:
 Did this task succeed? Respond with JSON only."""),
     ]
 
-    response = invoke_with_retry(llm, messages)
+    response = invoke_with_fallback(messages)
     raw = response.content.strip()
 
     # Strip markdown fences

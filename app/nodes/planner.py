@@ -12,7 +12,7 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.state import AgentState, Task, TaskStatus, TaskPriority, AgentPhase
-from app.llm import get_llm, invoke_with_retry
+from app.llm import get_llm, invoke_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +69,7 @@ def planner_node(state: AgentState) -> dict:
 
 
 def _planner_node_inner(state: AgentState) -> dict:
-    logger.info("PLANNER: step 1 - get llm")
-    llm = get_llm()
-
+    logger.info("PLANNER: step 1 - resolve model chain")
     logger.info("PLANNER: step 2 - get tools")
     from app.tools.registry import registry
     tools = ", ".join(t.name for t in registry.list_tools())
@@ -84,7 +82,7 @@ def _planner_node_inner(state: AgentState) -> dict:
     ]
 
     logger.info("PLANNER: step 4 - invoke llm")
-    response = invoke_with_retry(llm, messages)
+    response = invoke_with_fallback(messages)
 
     logger.info("PLANNER: step 5 - extract content")
     content = response.content
