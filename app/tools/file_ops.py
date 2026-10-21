@@ -1,29 +1,43 @@
-"""File operations tools — read, write, list, search."""
+"""
+File operation tools — read, write, edit, list, exist, search.
+
+Every path is resolved through :mod:`app.workspace` so operations stay
+inside the sandbox and a per-task workspace can be swapped in.
+"""
 
 from __future__ import annotations
 
 import os
 import pathlib
+import re
+from typing import Any
 
-from .registry import Tool
+from app.tools.registry import Tool
+from app.workspace import current_workspace, resolve_in_workspace
 
-WORKSPACE = pathlib.Path("/tmp/task-planner-workspace")
-WORKSPACE.mkdir(parents=True, exist_ok=True)
+MAX_READ_CHARS = 10000
+MAX_WRITE_CHARS = 200000
+
+# JSON Schemas for input validation.
+STRING_SCHEMA: dict[str, Any] = {"type": "string"}
 
 
 def _read_file(path: str) -> str:
-    p = WORKSPACE / path.strip()
+    try:
+        p = resolve_in_workspace(path)
+    except PermissionError as e:
+        return f"ERROR: {e}"
     if not p.exists():
         return f"ERROR: File not found: {path}"
     if not p.is_file():
         return f"ERROR: Not a file: {path}"
     try:
         content = p.read_text(encoding="utf-8")
-        if len(content) > 10000:
-            return content[:10000] + f"\n... (truncated, {len(content)} total chars)"
-        return content
     except Exception as e:
         return f"ERROR: {e}"
+    if len(content) > MAX_READ_CHARS:
+        return content[:MAX_READ_CHARS] + f"\n... (truncated, {len(content)} total chars)"
+    return content
 
 
 def _write_file(args: str) -> str:
@@ -31,14 +45,51 @@ def _write_file(args: str) -> str:
     if len(parts) < 2:
         return "ERROR: Format: <path>\\n<content>"
     path, content = parts[0].strip(), parts[1]
-    p = WORKSPACE / path
+    if len(content) > MAX_WRITE_CHARS:
+        return f"ERROR: Content exceeds {MAX_WRITE_CHARS} characters"
+    try:
+        p = resolve_in_workspace(path)
+    except PermissionError as e:
+        return f"ERROR: {e}"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     return f"OK: Wrote {len(content)} chars to {path}"
 
 
+def _edit_file(args: str) -> str:
+    """
+    Replace an exact string in a file.
+
+    Input format: ``<path>\\n<old_string>\\n<new_string>``
+    """
+    parts = args.split("\n", 2)
+    if len(parts) < 3:
+        return "ERROR: Format: <path>\\n<old_string>\\n<new_string>"
+    path, old, new = parts[0].strip(), parts[1], parts[2]
+    try:
+        p = resolve_in_workspace(path)
+    except PermissionError as e:
+        return f"ERROR: {e}"
+    if not p.exists():
+        return f"ERROR: File not found: {path}"
+    try:
+        content = p.read_text(encoding="utf-8")
+    except Exception as e:
+        return f"ERROR: {e}"
+    if old not in content:
+        return f"ERROR: Target text not found in {path}. Read the file first."
+    occurrences = content.count(old)
+    content = content.replace(old, new, 1)
+    p.write_text(content, encoding="utf-8")
+    return f"OK: Replaced 1 of {occurrences} occurrence(s) in {path}"
+
+
 def _list_dir(path: str) -> str:
-    p = WORKSPACE / path.strip().lstrip("/")
+    target = (path or ".").strip().lstrip("/\\")
+    try:
+        p = resolve_in_workspace(target)
+    except PermissionError as e:
+        return f"ERROR: {e}"
     if not p.exists():
         return f"ERROR: Directory not found: {path}"
     if not p.is_dir():
@@ -48,47 +99,142 @@ def _list_dir(path: str) -> str:
         prefix = "DIR " if item.is_dir() else "FILE"
         size = item.stat().st_size if item.is_file() else 0
         entries.append(f"[{prefix}] {item.name} ({size} bytes)")
-    if not entries:
-        return "(empty directory)"
-    return "\n".join(entries)
+    return "\n".join(entries) if entries else "(empty directory)"
 
 
 def _file_exists(path: str) -> str:
-    p = WORKSPACE / path.strip()
+    try:
+        p = resolve_in_workspace(path)
+    except PermissionError as e:
+        return f"ERROR: {e}"
     return f"EXISTS: {p.exists()}"
 
 
 def _search_in_files(pattern: str) -> str:
-    """Simple grep-like search across files in workspace."""
-    import re
+    """Regex search across workspace files."""
     try:
         regex = re.compile(pattern.strip(), re.IGNORECASE)
     except re.error as e:
         return f"ERROR: Invalid regex: {e}"
 
+    root = current_workspace()
     matches = []
-    for root, _, files in os.walk(WORKSPACE):
-        for fname in files:
-            fp = pathlib.Path(root) / fname
+    for dirpath, _, filenames in os.walk(root):
+        for fname in filenames:
+            fp = pathlib.Path(dirpath) / fname
             try:
                 for i, line in enumerate(fp.read_text(encoding="utf-8").splitlines(), 1):
                     if regex.search(line):
-                        rel = fp.relative_to(WORKSPACE)
-                        matches.append(f"{rel}:{i}: {line.strip()}")
+                        matches.append(f"{fp.relative_to(root)}:{i}: {line.strip()}")
                         if len(matches) >= 50:
                             return "\n".join(matches)
             except Exception:
                 continue
-    if not matches:
-        return "No matches found"
-    return "\n".join(matches)
+    return "\n".join(matches) if matches else "No matches found"
+
+
+def _glob(pattern: str) -> str:
+    """List files matching a glob pattern, relative to the workspace."""
+    root = current_workspace()
+    try:
+        hits = sorted(
+            str(p.relative_to(root))
+            for p in root.rglob("*")
+            if p.is_file() and p.match(pattern.strip())
+        )
+    except Exception as e:
+        return f"ERROR: {e}"
+    return "\n".join(hits[:200]) if hits else "No matching files"
+
+
+def _grep(args: str) -> str:
+    """
+    Grep-like content search with optional file filter.
+
+    Input format: ``<pattern>`` or ``<pattern>\\n<file_glob>``
+    """
+    parts = args.split("\n", 1)
+    pattern = parts[0].strip()
+    file_glob = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "*"
+    try:
+        regex = re.compile(pattern, re.IGNORECASE)
+    except re.error as e:
+        return f"ERROR: Invalid regex: {e}"
+
+    root = current_workspace()
+    matches = []
+    for path in sorted(root.rglob(file_glob)):
+        if not path.is_file():
+            continue
+        try:
+            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if regex.search(line):
+                    matches.append(f"{path.relative_to(root)}:{i}: {line.strip()}")
+                    if len(matches) >= 50:
+                        return "\n".join(matches)
+        except Exception:
+            continue
+    return "\n".join(matches) if matches else "No matches found"
 
 
 def get_file_tools() -> list[Tool]:
     return [
-        Tool("read_file", "Read contents of a file. Input: file path relative to workspace.", _read_file, safe=True),
-        Tool("write_file", "Write content to a file. Input: path\\ncontent (newline-separated).", _write_file, safe=False),
-        Tool("list_directory", "List files and directories. Input: directory path (or '.' for root).", _list_dir, safe=True),
-        Tool("file_exists", "Check if a file exists. Input: file path.", _file_exists, safe=True),
-        Tool("search_files", "Regex search across all files. Input: regex pattern.", _search_in_files, safe=True),
+        Tool(
+            "read_file",
+            "Read contents of a file. Input: file path relative to workspace.",
+            _read_file,
+            safe=True,
+            input_schema=STRING_SCHEMA,
+        ),
+        Tool(
+            "write_file",
+            "Write content to a file. Input: path\\ncontent (newline-separated).",
+            _write_file,
+            safe=False,
+            requires_confirmation=True,
+            input_schema=STRING_SCHEMA,
+        ),
+        Tool(
+            "edit_file",
+            "Replace an exact string in a file. Input: path\\nold_string\\nnew_string.",
+            _edit_file,
+            safe=False,
+            requires_confirmation=True,
+            input_schema=STRING_SCHEMA,
+        ),
+        Tool(
+            "list_directory",
+            "List files and directories. Input: directory path (or '.' for root).",
+            _list_dir,
+            safe=True,
+            input_schema=STRING_SCHEMA,
+        ),
+        Tool(
+            "file_exists",
+            "Check if a file exists. Input: file path.",
+            _file_exists,
+            safe=True,
+            input_schema=STRING_SCHEMA,
+        ),
+        Tool(
+            "search_files",
+            "Regex search across all files. Input: regex pattern.",
+            _search_in_files,
+            safe=True,
+            input_schema=STRING_SCHEMA,
+        ),
+        Tool(
+            "glob",
+            "Find files matching a glob pattern. Input: pattern (e.g. '**/*.py').",
+            _glob,
+            safe=True,
+            input_schema=STRING_SCHEMA,
+        ),
+        Tool(
+            "grep",
+            "Search file contents for a pattern. Input: pattern, optional second line with a file glob.",
+            _grep,
+            safe=True,
+            input_schema=STRING_SCHEMA,
+        ),
     ]
