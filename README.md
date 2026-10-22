@@ -99,12 +99,24 @@ Two changes came straight out of measuring rather than guessing: the
 planner was producing **nineteen tasks for a one-file goal**, and the
 executor was resending its whole history on every call. Fixing the first
 (short plans, plus stopping once the goal is satisfied) and the second
-(a context budget) took the first benchmark task from **eight tool
-calls and sixty-four seconds** down to **two tool calls and fourteen
+(a context budget) took the first benchmark task from **eight tool calls
+and sixty-four seconds** down to **two tool calls and fourteen
 seconds**, and cut input tokens from roughly thirty thousand to **6,540**.
 
-On a free tier with a 200,000 token daily allowance, that is the
-difference between a benchmark that runs and one that does not.
+A full pass over the fifteen tasks costs about **115,000 input tokens
+and 13,000 output tokens** on a real model. That is worth knowing
+before you go looking for a provider: on the Groq free tier, whose
+allowance is 200,000 tokens a day for the whole organisation, a single
+benchmark pass is roughly **60% of the daily budget** — which is why the
+harness ships with a token budget and stops cleanly when the quota
+runs out, and why the CI gate uses the reference solver, which costs
+nothing.
+
+| Model source | Cost | Use it for |
+|---|---:|---|
+| Reference solver (no API key) | 0 tokens | CI regression gate, always |
+| OpenRouter `:free` models | separate quota | Daily live measurement |
+| Groq free tier | 200k tokens/day, shared | Fallback provider |
 
 ### Evaluation harness
 
