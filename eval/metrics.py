@@ -31,6 +31,10 @@ class RunSummary:
     permission_asks: int
     permission_denials: int
     errors: int
+    tokens_in: int = 0
+    tokens_out: int = 0
+    mean_tokens_in: float = 0.0
+    tokens_per_success: float = 0.0
     by_kind: dict[str, dict[str, Any]] = field(default_factory=dict)
     failures: list[dict[str, Any]] = field(default_factory=list)
 
@@ -47,6 +51,10 @@ class RunSummary:
             "permission_asks": self.permission_asks,
             "permission_denials": self.permission_denials,
             "errors": self.errors,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "mean_tokens_in": round(self.mean_tokens_in, 1),
+            "tokens_per_success": round(self.tokens_per_success, 1),
             "by_kind": self.by_kind,
             "failures": self.failures,
         }
@@ -89,6 +97,12 @@ def summarize(
         permission_asks=sum(r.permission_asks for r in items),
         permission_denials=sum(r.permission_denials for r in items),
         errors=sum(1 for r in items if r.error),
+        tokens_in=sum(r.tokens_in for r in items),
+        tokens_out=sum(r.tokens_out for r in items),
+        mean_tokens_in=_mean([float(r.tokens_in) for r in items]),
+        tokens_per_success=(
+            sum(r.tokens_in + r.tokens_out for r in items) / success if success else 0.0
+        ),
         by_kind=by_kind,
         failures=failures,
     )
@@ -111,8 +125,9 @@ def compare(baseline: RunSummary, candidate: RunSummary) -> dict[str, Any]:
     }
 
 
-def load_summary(path: Path) -> RunSummary | None:
+def load_summary(path: Path | str) -> RunSummary | None:
     """Load a summary previously written by :func:`save_summary`."""
+    path = Path(path)
     if not path.exists():
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -128,12 +143,17 @@ def load_summary(path: Path) -> RunSummary | None:
         permission_asks=data.get("permission_asks", 0),
         permission_denials=data.get("permission_denials", 0),
         errors=data.get("errors", 0),
+        tokens_in=data.get("tokens_in", 0),
+        tokens_out=data.get("tokens_out", 0),
+        mean_tokens_in=data.get("mean_tokens_in", 0.0),
+        tokens_per_success=data.get("tokens_per_success", 0.0),
         by_kind=data.get("by_kind", {}),
         failures=data.get("failures", []),
     )
 
 
-def save_summary(summary: RunSummary, path: Path) -> None:
+def save_summary(summary: RunSummary, path: Path | str) -> None:
     """Write a summary to JSON."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(summary.to_dict(), indent=2), encoding="utf-8")

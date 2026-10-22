@@ -117,6 +117,7 @@ class AgentState(dict):
             "pending_clarification": None,
             "clarification_history": [],
             "permission_events": [],
+            "token_usage": {"input": 0, "output": 0, "calls": 0},
             "phase": AgentPhase.IDLE,
             "error": None,
         }

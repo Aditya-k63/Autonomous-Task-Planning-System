@@ -197,6 +197,7 @@ def run_task(
 
         passed, detail = task.verify(root)
         events = final.get("permission_events", [])
+        usage = final.get("token_usage", {}) or {}
         return TaskResult(
             task_id=task.id,
             kind=task.kind,
@@ -208,6 +209,8 @@ def run_task(
             tool_calls=sum(1 for s in final.get("execution_history", []) if s.get("action") == "tool_call"),
             permission_asks=sum(1 for e in events if e.get("decision") == "ask"),
             permission_denials=sum(1 for e in events if e.get("decision") == "deny"),
+            tokens_in=int(usage.get("input", 0) or 0),
+            tokens_out=int(usage.get("output", 0) or 0),
             wall_ms=wall_ms,
             error=final.get("error"),
             tool_trace=trace,
@@ -241,8 +244,9 @@ def run_suite(
     ]
 
 
-def save_results(results: list[TaskResult], path: Path) -> None:
+def save_results(results: list[TaskResult], path: Path | str) -> None:
     """Write results to JSON."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "count": len(results),

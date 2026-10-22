@@ -54,6 +54,17 @@ Goal context: {goal}
 """
 
 
+def _record_usage(state: dict, response) -> None:
+    """Accumulate the token usage reported by the model."""
+    usage = getattr(response, "usage_metadata", None) or {}
+    if not usage:
+        return
+    totals = state.setdefault("token_usage", {"input": 0, "output": 0, "calls": 0})
+    totals["input"] = totals.get("input", 0) + int(usage.get("input_tokens", 0) or 0)
+    totals["output"] = totals.get("output", 0) + int(usage.get("output_tokens", 0) or 0)
+    totals["calls"] = totals.get("calls", 0) + 1
+
+
 def _run_tool(
     tool_name: str, tool_input: str, policy, task_id: str, args: dict | None = None
 ) -> tuple[str, bool, dict]:
@@ -147,6 +158,7 @@ def _executor_inner(state: dict) -> dict:
     while steps_taken < max_steps:
         messages.append(HumanMessage(content=f"Execute the task. ({steps_taken + 1}/{max_steps} steps remaining)"))
         response = invoke_with_fallback(messages, tools=tool_defs)
+        _record_usage(state, response)
 
         # --- Native tool calls -----------------------------------------
         native_calls = getattr(response, "tool_calls", None) or []

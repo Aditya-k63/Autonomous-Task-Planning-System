@@ -75,6 +75,9 @@ Did this task succeed? Respond with JSON only."""),
     ]
 
     response = invoke_with_fallback(messages)
+    from app.nodes.executor import _record_usage
+
+    _record_usage(state, response)
     raw = response.content.strip()
 
     # Strip markdown fences

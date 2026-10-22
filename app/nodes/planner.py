@@ -82,6 +82,9 @@ def _planner_node_inner(state: AgentState) -> dict:
 
     logger.info("PLANNER: step 4 - invoke llm")
     response = invoke_with_fallback(messages)
+    from app.nodes.executor import _record_usage
+
+    _record_usage(state, response)
 
     logger.info("PLANNER: step 5 - extract content")
     content = response.content
