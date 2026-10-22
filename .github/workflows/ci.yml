@@ -17,8 +17,33 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m pytest tests/ -v
 
-  docker:
+  agent-eval:
     needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      # Runs the benchmark with the scripted reference solver, so the gate
+      # needs no API key. The reference solver must solve every task; a
+      # regression in the agent, the tools, or the workspace fails the build.
+      - name: Run agent evaluation
+        run: |
+          python -m eval.cli --baseline --oracle
+          python -m eval.cli --report --oracle
+      - name: Check the evaluation gate
+        run: python -m eval.gate --min-success-rate 1.0
+      - name: Upload the evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-eval-report
+          path: benchmarks/results/
+
+  docker:
+    needs: [test, agent-eval]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:

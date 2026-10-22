@@ -86,7 +86,15 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges("planner", after_planner, {"router": "router", "__end__": END})
     graph.add_conditional_edges("router", after_router, {"executor": "executor", "planner": "planner", "__end__": END})
     graph.add_conditional_edges("executor", after_executor, {"reviewer": "reviewer", "__end__": END})
-    graph.add_conditional_edges("reviewer", after_reviewer, {"router": "router", "__end__": END})
+    # "executor" must be listed here: after_reviewer returns it on the
+    # self-healing retry path, and a destination missing from this map
+    # raises KeyError inside LangGraph the moment a task fails and is
+    # retried.
+    graph.add_conditional_edges(
+        "reviewer",
+        after_reviewer,
+        {"router": "router", "executor": "executor", "__end__": END},
+    )
 
     return graph
 

@@ -21,8 +21,16 @@ def get_web_tools() -> list[Tool]:
     return [
         Tool(
             "fetch_url",
-            "Fetch and return text content of a URL. Input: URL string.",
+            "Fetch a URL and return its text content.",
             _fetch_url,
             safe=True,
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "url": {"type": "string", "description": "Absolute URL to fetch."}
+                },
+                "required": ["url"],
+            },
         ),
     ]

@@ -24,6 +24,18 @@ def router_node(state: dict) -> dict:
         state["phase"] = "done"
         return state
 
+    # The reviewer reported the whole goal is already satisfied. Stop
+    # rather than working through the rest of an over-long plan.
+    if state.get("goal_satisfied"):
+        logger.info("ROUTER: Goal already satisfied — stopping early")
+        for task in tasks:
+            if task.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS):
+                task.status = TaskStatus.COMPLETED
+                task.result = task.result or "Covered by an earlier task"
+        state["tasks"] = [t.model_dump() for t in tasks]
+        state["phase"] = "done"
+        return state
+
     # Find next pending task whose dependencies are all completed
     pending = [t for t in tasks if t.status == TaskStatus.PENDING]
     completed_ids = {t.id for t in tasks if t.status == TaskStatus.COMPLETED}

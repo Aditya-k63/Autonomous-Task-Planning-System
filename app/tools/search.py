@@ -60,8 +60,16 @@ def get_search_tools() -> list[Tool]:
     return [
         Tool(
             "web_search",
-            "Search the web for information. Input: search query string.",
+            "Search the web for information.",
             _web_search,
             safe=True,
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "query": {"type": "string", "description": "Search query."}
+                },
+                "required": ["query"],
+            },
         ),
     ]

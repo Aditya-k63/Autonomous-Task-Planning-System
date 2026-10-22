@@ -11,7 +11,8 @@ import logging
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.state import AgentState, Task, TaskStatus, AgentPhase, Step
-from app.llm import get_llm, invoke_with_retry
+from app.llm import get_llm, invoke_with_fallback
+from app.json_utils import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,14 @@ RESPOND WITH ONLY valid JSON:
   "score": 0.0-1.0,
   "reason": "brief explanation",
   "suggestion": "if failed, what should be tried differently",
-  "retry": true/false
+  "retry": true/false,
+  "goal_satisfied": true/false
 }}
+
+"goal_satisfied" is true only when the ORIGINAL GOAL as a whole is now
+achieved, not merely this one task. If the goal asks for one file and
+that file now exists with the right contents, it is satisfied. If the goal
+has several parts and only one is done, it is not.
 
 Be lenient — if the task is substantially complete, mark it as passing.
 Only fail if the task clearly did not achieve its purpose.
@@ -41,7 +48,6 @@ If a task failed but can be retried with a different approach, set "retry": true
 def reviewer_node(state: AgentState) -> dict:
     """Review the current task's completion. Returns partial state update."""
     logger.info("REVIEWER: Reviewing task completion")
-    llm = get_llm()
 
     # Get current task safely
     tasks_raw = state.get("tasks", [])
@@ -75,35 +81,30 @@ Execution history:
 Did this task succeed? Respond with JSON only."""),
     ]
 
-    response = invoke_with_retry(llm, messages)
-    raw = response.content.strip()
+    response = invoke_with_fallback(messages)
+    from app.nodes.executor import _record_usage
 
-    # Strip markdown fences
-    if "```" in raw:
-        parts = raw.split("```")
-        if len(parts) >= 3:
-            raw = parts[1].strip()
-            if raw.startswith(("json", "JSON")):
-                raw = raw[4:].strip()
-            if raw.endswith("```"):
-                raw = raw[:-3].strip()
+    _record_usage(state, response)
+    raw = str(response.content).strip()
 
-    # Extract JSON object
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        raw = raw[start:end + 1]
-
-    try:
-        data = json.loads(raw)
-        passed = data.get("pass", False)
-        score = data.get("score", 0.0)
-        reason = data.get("reason", "")
-    except json.JSONDecodeError:
+    data = extract_json_object(raw)
+    if data is None:
         logger.error(f"Reviewer returned invalid JSON: {raw[:300]}")
         passed = False
         score = 0.0
         reason = f"Review parse error: {raw[:300]}"
+    else:
+        passed = data.get("pass", False)
+        score = data.get("score", 0.0)
+        reason = data.get("reason", "")
+
+    # The reviewer may report that the whole goal is already achieved,
+    # which lets the agent stop instead of grinding through the rest of
+    # an over-long plan.
+    goal_satisfied = bool(data.get("goal_satisfied", False)) if data else False
+    if goal_satisfied:
+        state["goal_satisfied"] = True
+        logger.info("REVIEWER: goal reported satisfied")
 
     logger.info(f"REVIEWER: pass={passed}, score={score:.2f}, reason={reason[:100]}")
 
