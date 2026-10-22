@@ -27,7 +27,6 @@ OPENROUTER_MODELS: tuple[str, ...] = (
 GROQ_MODELS: tuple[str, ...] = (
     "qwen/qwen3.8-27b",
     "openai/gpt-oss-120b",
-    "allam-2-7b",
     "openai/gpt-oss-20b",
 )
 
