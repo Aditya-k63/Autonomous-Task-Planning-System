@@ -11,7 +11,9 @@ retried a few times for transient failures, then the next endpoint is tried.
 from __future__ import annotations
 
 import logging
+import re
 import time
+from typing import Any
 
 from app.llm_models import ModelSpec, build_model_chain
 
@@ -46,6 +48,73 @@ DEFAULT_HEADERS = {
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     "Accept": "application/json",
 }
+
+# Longest we will ever sit and wait for a rate limit to clear. Past this
+# the endpoint is skipped so the chain can move on to another provider.
+MAX_RATE_LIMIT_WAIT = 30.0
+
+# An endpoint that reports a rate limit is quarantined for this long, so
+# later calls in the same run skip it instead of paying the round trip.
+QUARANTINE_SECONDS = 900.0
+
+# Endpoint label -> monotonic time at which it may be tried again.
+_quarantine: dict[str, float] = {}
+
+
+def quarantine_endpoint(label: str, seconds: float = QUARANTINE_SECONDS) -> None:
+    """Mark an endpoint as temporarily unusable."""
+    _quarantine[label] = time.monotonic() + seconds
+    logger.warning("Quarantined endpoint %s for %ss", label, round(seconds))
+
+
+def is_quarantined(label: str) -> bool:
+    """Return True when the endpoint is inside its quarantine window."""
+    until = _quarantine.get(label)
+    if until is None:
+        return False
+    if time.monotonic() >= until:
+        _quarantine.pop(label, None)
+        return False
+    return True
+
+
+def clear_quarantine() -> None:
+    """Forget every quarantined endpoint."""
+    _quarantine.clear()
+
+# Some providers state the wait explicitly, e.g. "Please try again in
+# 1m3.936s" or "in 4m0.624s" or "in 45s". The format is compound, so
+# hours, minutes, and seconds can all appear in one value.
+_WAIT_PATTERN = re.compile(
+    r"try again in\s*"
+    r"(?:(\d+)\s*h)?\s*"
+    r"(?:(\d+)\s*m)?\s*"
+    r"(?:(\d+(?:\.\d+)?)\s*s)?",
+    re.IGNORECASE,
+)
+
+
+def rate_limit_wait_hint(error: Exception) -> float | None:
+    """
+    Return the wait a provider asked for, in seconds.
+
+    Handles the compound form providers use, e.g. ``1m3.936s`` is
+    63.936 seconds. Returns ``None`` when the error states no wait.
+    """
+    match = _WAIT_PATTERN.search(str(error))
+    if not match:
+        return None
+    hours, minutes, seconds = match.groups()
+    if not (hours or minutes or seconds):
+        return None
+    try:
+        return (
+            float(hours or 0) * 3600.0
+            + float(minutes or 0) * 60.0
+            + float(seconds or 0)
+        )
+    except ValueError:
+        return None
 
 
 def is_transient(error: Exception) -> bool:
@@ -105,8 +174,11 @@ def invoke_with_retry(llm, messages, max_retries: int = MAX_RETRIES):
     """
     Invoke an LLM, retrying transient failures on the same endpoint.
 
-    Kept for callers that hold a single client. :func:`invoke_with_fallback`
-    is the entry point that walks the whole chain.
+    A rate limit that says how long to wait is honoured when that wait is
+    short. When the wait is longer than :data:`MAX_RATE_LIMIT_WAIT` the
+    endpoint is abandoned instead, because sleeping through a daily quota
+    reset would stall the run and every other model on the same account
+    is blocked by the same limit anyway.
     """
     last_error: Exception | None = None
     for attempt in range(max_retries):
@@ -114,18 +186,29 @@ def invoke_with_retry(llm, messages, max_retries: int = MAX_RETRIES):
             return llm.invoke(messages)
         except Exception as e:
             last_error = e
-            if is_transient(e) and attempt < max_retries - 1:
-                delay = RETRY_DELAY * (attempt + 1)
-                logger.warning(
-                    "LLM transient error (attempt %s/%s): %s. Retrying in %ss...",
-                    attempt + 1,
-                    max_retries,
-                    e,
-                    delay,
-                )
-                time.sleep(delay)
-            else:
+            if not is_transient(e) or attempt >= max_retries - 1:
                 raise
+
+            hint = rate_limit_wait_hint(e)
+            if hint is not None:
+                if hint > MAX_RATE_LIMIT_WAIT:
+                    logger.warning(
+                        "Rate limit needs %ss — skipping this endpoint "
+                        "instead of waiting.", round(hint, 1),
+                    )
+                    raise
+                delay = hint
+            else:
+                delay = RETRY_DELAY * (attempt + 1)
+
+            logger.warning(
+                "LLM transient error (attempt %s/%s): %s. Retrying in %ss...",
+                attempt + 1,
+                max_retries,
+                str(e)[:200],
+                round(delay, 1),
+            )
+            time.sleep(delay)
     raise last_error  # pragma: no cover - defensive
 
 
@@ -155,6 +238,8 @@ def invoke_with_fallback(
 
     last_error: Exception | None = None
     for spec in chain:
+        if is_quarantined(spec.label):
+            continue
         try:
             client = _build_client(spec, settings)
         except Exception as e:  # missing client library for this provider
@@ -170,7 +255,11 @@ def invoke_with_fallback(
             return invoke_with_retry(client, messages, max_retries=max_retries)
         except Exception as e:
             last_error = e
-            logger.warning("Model %s failed: %s. Trying next endpoint.", spec.label, e)
+            if rate_limit_wait_hint(e) is not None:
+                quarantine_endpoint(spec.label)
+            logger.warning("Model %s failed: %s. Trying next endpoint.", spec.label, str(e)[:200])
+    if last_error is None:
+        last_error = RuntimeError("Every configured endpoint is quarantined")
     raise RuntimeError(f"All LLM endpoints failed. Last error: {last_error}")
 
 
