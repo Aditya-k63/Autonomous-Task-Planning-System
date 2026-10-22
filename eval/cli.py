@@ -46,9 +46,17 @@ def _run(label: str, fault=None, limit: int | None = None, oracle: bool = False)
         f"[eval] {label}: {summary.success}/{summary.total} "
         f"({summary.success_rate * 100:.1f}%)  "
         f"mean_steps={summary.mean_steps:.2f}  "
-        f"mean_latency={summary.mean_wall_ms:.0f}ms",
+        f"mean_latency={summary.mean_wall_ms:.0f}ms  "
+        f"tokens_in={summary.tokens_in:,}",
         flush=True,
     )
+    if summary.infra_errors:
+        print(
+            f"[eval] WARNING: {summary.infra_errors} task(s) could not run because "
+            "every model endpoint was unavailable. They are excluded from the "
+            "success rate, but the run is incomplete.",
+            flush=True,
+        )
     return results, summary
 
 

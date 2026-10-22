@@ -52,6 +52,7 @@ class TaskResult:
     wall_ms: int = 0
     error: str | None = None
     tool_trace: list[str] = field(default_factory=list)
+    infra_error: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -216,6 +217,8 @@ def run_task(
             tool_trace=trace,
         )
     except Exception as exc:  # a crash is a failure, not an abort
+        from app.llm import AllEndpointsUnavailable
+
         return TaskResult(
             task_id=task.id,
             kind=task.kind,
@@ -224,6 +227,7 @@ def run_task(
             detail=f"harness error: {exc}",
             fault=fault.name if fault else None,
             error=traceback.format_exc(limit=20),
+            infra_error=isinstance(exc, AllEndpointsUnavailable),
         )
     finally:
         set_workspace(None)

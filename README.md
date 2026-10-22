@@ -87,10 +87,24 @@ modes: `off`, `ask` (default), and `enforce`.
 | Context budget | The conversation is trimmed to the system prompt plus the most recent tool exchanges, so a long task does not pay for its own history |
 | Model fallback | The chain walks OpenRouter → Groq → xAI, retrying transient errors on each endpoint before moving on |
 | Rate-limit awareness | A provider that says "try again in 18m" is skipped rather than slept through, and quarantined so later calls skip it without a round trip |
+| Goal-aware stopping | The reviewer reports whether the original goal is already met, and the agent stops instead of grinding through the rest of the plan |
 
-The last three exist because they were needed to make the agent work
+The last four exist because they were needed to make the agent work
 against a free-tier provider in practice, not because they are on a
 checklist. The token accounting below is what made the cost visible.
+
+### What the numbers cost
+
+Two changes came straight out of measuring rather than guessing: the
+planner was producing **nineteen tasks for a one-file goal**, and the
+executor was resending its whole history on every call. Fixing the first
+(short plans, plus stopping once the goal is satisfied) and the second
+(a context budget) took the first benchmark task from **eight tool
+calls and sixty-four seconds** down to **two tool calls and fourteen
+seconds**, and cut input tokens from roughly thirty thousand to **6,540**.
+
+On a free tier with a 200,000 token daily allowance, that is the
+difference between a benchmark that runs and one that does not.
 
 ### Evaluation harness
 

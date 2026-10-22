@@ -32,6 +32,7 @@ def summary_table(summary: RunSummary) -> str:
         f"| Permission requests | {summary.permission_asks} |",
         f"| Permission denials | {summary.permission_denials} |",
         f"| Harness errors | {summary.errors} |",
+        f"| Infrastructure errors | {summary.infra_errors} |",
         f"| Input tokens | {summary.tokens_in:,} |",
         f"| Output tokens | {summary.tokens_out:,} |",
         f"| Mean input tokens / task | {summary.mean_tokens_in:,.0f} |",

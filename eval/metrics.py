@@ -35,6 +35,7 @@ class RunSummary:
     tokens_out: int = 0
     mean_tokens_in: float = 0.0
     tokens_per_success: float = 0.0
+    infra_errors: int = 0
     by_kind: dict[str, dict[str, Any]] = field(default_factory=dict)
     failures: list[dict[str, Any]] = field(default_factory=list)
 
@@ -55,6 +56,7 @@ class RunSummary:
             "tokens_out": self.tokens_out,
             "mean_tokens_in": round(self.mean_tokens_in, 1),
             "tokens_per_success": round(self.tokens_per_success, 1),
+            "infra_errors": self.infra_errors,
             "by_kind": self.by_kind,
             "failures": self.failures,
         }
@@ -63,16 +65,25 @@ class RunSummary:
 def summarize(
     results: Iterable[TaskResult], *, label: str = "run", fault: str | None = None
 ) -> RunSummary:
-    """Aggregate task results into a summary."""
+    """
+    Aggregate task results into a summary.
+
+    A task that could not run because every model endpoint was blocked or
+    rate-limited is an infrastructure error, not an agent failure. Those
+    are counted separately and excluded from the success rate, so a
+    quota problem can never be reported as the agent being bad.
+    """
     items = list(results)
-    total = len(items)
-    success = sum(1 for r in items if r.success)
+    scored = [r for r in items if not r.infra_error]
+    infra = len(items) - len(scored)
+    total = len(scored)
+    success = sum(1 for r in scored if r.success)
 
     def _mean(values: list[float]) -> float:
         return sum(values) / len(values) if values else 0.0
 
     by_kind: dict[str, dict[str, Any]] = {}
-    for r in items:
+    for r in scored:
         bucket = by_kind.setdefault(r.kind, {"total": 0, "success": 0})
         bucket["total"] += 1
         bucket["success"] += 1 if r.success else 0
@@ -81,7 +92,7 @@ def summarize(
 
     failures = [
         {"task_id": r.task_id, "detail": r.detail, "error": r.error}
-        for r in items
+        for r in scored
         if not r.success
     ]
 
@@ -91,18 +102,19 @@ def summarize(
         total=total,
         success=success,
         success_rate=(success / total) if total else 0.0,
-        mean_steps=_mean([float(r.steps) for r in items]),
-        mean_tool_calls=_mean([float(r.tool_calls) for r in items]),
-        mean_wall_ms=_mean([float(r.wall_ms) for r in items]),
-        permission_asks=sum(r.permission_asks for r in items),
-        permission_denials=sum(r.permission_denials for r in items),
-        errors=sum(1 for r in items if r.error),
-        tokens_in=sum(r.tokens_in for r in items),
-        tokens_out=sum(r.tokens_out for r in items),
-        mean_tokens_in=_mean([float(r.tokens_in) for r in items]),
+        mean_steps=_mean([float(r.steps) for r in scored]),
+        mean_tool_calls=_mean([float(r.tool_calls) for r in scored]),
+        mean_wall_ms=_mean([float(r.wall_ms) for r in scored]),
+        permission_asks=sum(r.permission_asks for r in scored),
+        permission_denials=sum(r.permission_denials for r in scored),
+        errors=sum(1 for r in scored if r.error),
+        tokens_in=sum(r.tokens_in for r in scored),
+        tokens_out=sum(r.tokens_out for r in scored),
+        mean_tokens_in=_mean([float(r.tokens_in) for r in scored]),
         tokens_per_success=(
-            sum(r.tokens_in + r.tokens_out for r in items) / success if success else 0.0
+            sum(r.tokens_in + r.tokens_out for r in scored) / success if success else 0.0
         ),
+        infra_errors=infra,
         by_kind=by_kind,
         failures=failures,
     )
@@ -147,6 +159,7 @@ def load_summary(path: Path | str) -> RunSummary | None:
         tokens_out=data.get("tokens_out", 0),
         mean_tokens_in=data.get("mean_tokens_in", 0.0),
         tokens_per_success=data.get("tokens_per_success", 0.0),
+        infra_errors=data.get("infra_errors", 0),
         by_kind=data.get("by_kind", {}),
         failures=data.get("failures", []),
     )

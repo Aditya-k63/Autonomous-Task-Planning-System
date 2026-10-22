@@ -195,6 +195,10 @@ def _chain(settings) -> list[ModelSpec]:
     )
 
 
+class AllEndpointsUnavailable(RuntimeError):
+    """Raised when every configured endpoint is blocked or rate-limited."""
+
+
 def invoke_with_retry(llm, messages, max_retries: int = MAX_RETRIES):
     """
     Invoke an LLM, retrying transient failures on the same endpoint.
@@ -249,7 +253,8 @@ def invoke_with_fallback(
     ``tools`` is an optional list of OpenAI-style function definitions. When
     given, the client is bound to them so the model can emit native tool
     calls. Returns the model response. Raises the last error if every
-    endpoint fails.
+    endpoint fails, or :class:`AllEndpointsUnavailable` when every
+    endpoint is blocked or rate-limited.
     """
     from app.config import get_settings
 
@@ -288,7 +293,10 @@ def invoke_with_fallback(
                 quarantine_endpoint(spec.label)
             logger.warning("Model %s failed: %s. Trying next endpoint.", spec.label, str(e)[:200])
     if last_error is None:
-        last_error = RuntimeError("Every configured endpoint is unavailable")
+        raise AllEndpointsUnavailable(
+            "Every configured endpoint is rate-limited or does not support "
+            "tool calling. Wait for the quota to reset or add another provider."
+        )
     raise RuntimeError(f"All LLM endpoints failed. Last error: {last_error}")
 
 

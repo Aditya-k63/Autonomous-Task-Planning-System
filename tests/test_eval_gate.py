@@ -38,3 +38,20 @@ def test_gate_fails_below_threshold(tmp_path):
 
 def test_gate_fails_when_summary_is_missing(tmp_path):
     assert check(tmp_path / "nope.json", 1.0) == 1
+
+
+def test_infrastructure_errors_are_not_scored_as_failures():
+    """A rate-limited provider must never look like a failing agent."""
+    from eval.metrics import summarize
+    from eval.runner import TaskResult
+
+    results = [
+        TaskResult(task_id="a", kind="file_create", tags=[], success=True, detail="ok"),
+        TaskResult(task_id="b", kind="file_create", tags=[], success=False, detail="nope"),
+        TaskResult(task_id="c", kind="file_create", tags=[], success=False, detail="quota", infra_error=True),
+    ]
+    summary = summarize(results, label="t")
+    assert summary.total == 2
+    assert summary.success == 1
+    assert summary.success_rate == 0.5
+    assert summary.infra_errors == 1
