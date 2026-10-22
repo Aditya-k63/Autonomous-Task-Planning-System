@@ -55,3 +55,13 @@ def test_infrastructure_errors_are_not_scored_as_failures():
     assert summary.success == 1
     assert summary.success_rate == 0.5
     assert summary.infra_errors == 1
+
+
+def test_suite_stops_when_the_provider_is_unavailable():
+    """Remaining tasks are marked as not attempted, not as failures."""
+    from eval.runner import run_suite
+    from eval.tasks import TASKS
+
+    results = run_suite(TASKS, token_budget=1)
+    assert all(r.infra_error for r in results)
+    assert sum(1 for r in results if "not attempted" in r.detail) == len(results) - 1

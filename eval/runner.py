@@ -32,6 +32,12 @@ from eval.tasks import Task
 # because a free-tier provider can rate-limit for minutes at a time.
 TASK_TIMEOUT_SECONDS = 180.0
 
+# Stop the suite once this many input tokens have been spent. A full pass
+# costs roughly 115,000 input tokens against a free-tier daily
+# allowance, so the budget stops a run from burning the quota and
+# leaving the rest of the suite unattempted.
+DEFAULT_TOKEN_BUDGET = 160_000
+
 
 @dataclass
 class TaskResult:
@@ -239,13 +245,52 @@ def run_suite(
     fault: Fault | None = None,
     seed: int = 0,
     limit: int | None = None,
+    token_budget: int | None = DEFAULT_TOKEN_BUDGET,
 ) -> list[TaskResult]:
-    """Run a list of tasks and return one result per task."""
+    """
+    Run a list of tasks and return one result per task.
+
+    Stops early when the token budget is spent. Tasks that were never
+    attempted are returned as infrastructure errors so the summary can
+    distinguish "not run" from "run and failed".
+    """
     selected = tasks[:limit] if limit else tasks
-    return [
-        run_task(task, fault=fault, seed=seed + index)
-        for index, task in enumerate(selected)
-    ]
+    results: list[TaskResult] = []
+    spent = 0
+    for index, task in enumerate(selected):
+        if token_budget is not None and spent >= token_budget:
+            results.append(
+                TaskResult(
+                    task_id=task.id,
+                    kind=task.kind,
+                    tags=list(task.tags),
+                    success=False,
+                    detail="not attempted: token budget exhausted",
+                    fault=fault.name if fault else None,
+                    infra_error=True,
+                )
+            )
+            continue
+        result = run_task(task, fault=fault, seed=seed + index)
+        spent += result.tokens_in + result.tokens_out
+        results.append(result)
+        if result.infra_error:
+            # The provider is gone. Stop rather than burning the quota on
+            # tasks that cannot run.
+            for remaining in selected[index + 1 :]:
+                results.append(
+                    TaskResult(
+                        task_id=remaining.id,
+                        kind=remaining.kind,
+                        tags=list(remaining.tags),
+                        success=False,
+                        detail="not attempted: model provider unavailable",
+                        fault=fault.name if fault else None,
+                        infra_error=True,
+                    )
+                )
+            break
+    return results
 
 
 def save_results(results: list[TaskResult], path: Path | str) -> None:

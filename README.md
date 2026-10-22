@@ -152,7 +152,7 @@ Regenerate with `python -m eval.cli --baseline` and `python -m eval.cli --update
 
 <!-- EVAL_RESULTS:END -->
 
-### The harness found four real bugs
+### The harness found five real bugs
 
 Building the harness surfaced defects in the agent that a demo never
 would have:
@@ -173,6 +173,12 @@ would have:
    import and six of the repo's own tests failed. The shell tool is now
    cross-platform, with the POSIX resource limits applied only where
    they exist.
+5. **A crash on the self-healing path.** The reviewer's conditional-edge
+   map listed only `router` and `__end__`, but the retry path returns
+   `executor`. LangGraph raises `KeyError` for an undeclared
+   destination, so the agent crashed the moment a task legitimately
+   failed and was about to be retried. This only ever fires on a task
+   that genuinely fails, which is why a demo never hits it.
 
 ## Getting Started
 

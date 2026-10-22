@@ -12,7 +12,7 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.state import AgentState, Task, TaskStatus, TaskPriority, AgentPhase
-from app.llm import get_llm, invoke_with_fallback
+from app.llm import get_llm, invoke_with_fallback, AllEndpointsUnavailable
 from app.json_utils import extract_json_object
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,11 @@ def planner_node(state: AgentState) -> dict:
     logger.info("PLANNER: Breaking goal into tasks")
     try:
         return _planner_node_inner(state)
+    except AllEndpointsUnavailable:
+        # An exhausted provider is not a planning failure. Let it reach the
+        # harness so the run is reported as incomplete rather than as the
+        # agent failing every task.
+        raise
     except Exception as e:
         logger.error(f"PLANNER: Unhandled exception: {type(e).__name__}: {e}")
         return {

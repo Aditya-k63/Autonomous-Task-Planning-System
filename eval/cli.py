@@ -30,15 +30,15 @@ BASELINE_SUMMARY = RESULTS_DIR / "baseline.json"
 REPORT_PATH = RESULTS_DIR / "report.md"
 
 
-def _run(label: str, fault=None, limit: int | None = None, oracle: bool = False):
+def _run(label: str, fault=None, limit: int | None = None, oracle: bool = False, budget=None):
     print(f"[eval] running '{label}' over {limit or len(TASKS)} tasks...", flush=True)
     if oracle:
         from eval.oracle import use_oracle
 
         with use_oracle():
-            results = run_suite(TASKS, fault=fault, limit=limit)
+            results = run_suite(TASKS, fault=fault, limit=limit, token_budget=budget)
     else:
-        results = run_suite(TASKS, fault=fault, limit=limit)
+        results = run_suite(TASKS, fault=fault, limit=limit, token_budget=budget)
     summary = summarize(results, label=label, fault=fault.name if fault else None)
     save_results(results, RESULTS_DIR / f"{label}_details.json")
     save_summary(summary, RESULTS_DIR / f"{label}.json")
@@ -78,6 +78,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="regenerate the measured-results section of the README",
     )
+    parser.add_argument(
+        "--token-budget",
+        type=int,
+        default=None,
+        help="stop the run after this many tokens (default 160000)",
+    )
     args = parser.parse_args(argv)
 
     if args.update_readme:
@@ -110,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
 
     baseline_summary = None
     if args.baseline or not args.fault and not args.all_faults:
-        _, baseline_summary = _run("baseline", limit=args.limit, oracle=args.oracle)
+        _, baseline_summary = _run("baseline", limit=args.limit, oracle=args.oracle, budget=args.token_budget)
 
     if args.fault:
         fault = fault_by_name(args.fault)
@@ -118,7 +124,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[eval] unknown fault '{args.fault}'", file=sys.stderr)
             return 2
         _, summary = _run(
-            f"fault_{fault.name}", fault=fault, limit=args.limit, oracle=args.oracle
+            f"fault_{fault.name}",
+            fault=fault,
+            limit=args.limit,
+            oracle=args.oracle,
+            budget=args.token_budget,
         )
         if baseline_summary:
             print("[eval] delta:", json.dumps(compare(baseline_summary, summary), indent=2))
@@ -131,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
                 fault=fault,
                 limit=args.limit,
                 oracle=args.oracle,
+                budget=args.token_budget,
             )
         return 0
 

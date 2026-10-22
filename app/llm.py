@@ -267,6 +267,7 @@ def invoke_with_fallback(
         )
 
     last_error: Exception | None = None
+    only_rate_limits = True
     for spec in chain:
         if is_quarantined(spec.label):
             continue
@@ -291,8 +292,10 @@ def invoke_with_fallback(
                 mark_no_tool_support(spec.label)
             elif rate_limit_wait_hint(e) is not None:
                 quarantine_endpoint(spec.label)
+            else:
+                only_rate_limits = False
             logger.warning("Model %s failed: %s. Trying next endpoint.", spec.label, str(e)[:200])
-    if last_error is None:
+    if last_error is None or only_rate_limits:
         raise AllEndpointsUnavailable(
             "Every configured endpoint is rate-limited or does not support "
             "tool calling. Wait for the quota to reset or add another provider."
