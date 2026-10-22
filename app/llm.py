@@ -107,6 +107,38 @@ def _is_tool_calling_unsupported(error: Exception) -> bool:
         "not supported" in text or "does not support" in text
     )
 
+
+def _is_model_unavailable(error: Exception) -> bool:
+    """
+    Detect a model the account cannot use.
+
+    A configured model can be unavailable because the provider retired it
+    or because the account has no access to it. Retrying it on every call
+    wastes a round trip, so it is skipped for the rest of the run.
+    """
+    text = str(error).lower()
+    return (
+        "model_not_found" in text
+        or "does not exist or you do not have access" in text
+        or "model_not_available" in text
+    )
+
+
+# Endpoints whose model the account cannot use. Unlike a rate limit this
+# is not temporary, so it is remembered for the whole run.
+_unavailable_models: set[str] = set()
+
+
+def mark_model_unavailable(label: str) -> None:
+    """Record that a model cannot be used by this account."""
+    _unavailable_models.add(label)
+    logger.info("Model %s is unavailable for this account — skipping it", label)
+
+
+def model_is_available(label: str) -> bool:
+    """Return False once a model has been reported unavailable."""
+    return label not in _unavailable_models
+
 # Some providers state the wait explicitly, e.g. "Please try again in
 # 1m3.936s" or "in 4m0.624s" or "in 45s". The format is compound, so
 # hours, minutes, and seconds can all appear in one value.
@@ -271,6 +303,8 @@ def invoke_with_fallback(
     for spec in chain:
         if is_quarantined(spec.label):
             continue
+        if not model_is_available(spec.label):
+            continue
         if tools and not supports_tool_calling(spec.label):
             continue
         try:
@@ -290,6 +324,8 @@ def invoke_with_fallback(
             last_error = e
             if _is_tool_calling_unsupported(e):
                 mark_no_tool_support(spec.label)
+            elif _is_model_unavailable(e):
+                mark_model_unavailable(spec.label)
             elif rate_limit_wait_hint(e) is not None:
                 quarantine_endpoint(spec.label)
             else:

@@ -63,3 +63,23 @@ def test_quarantine_expires():
     time.sleep(0.05)
     assert is_quarantined("groq:expiring") is False
     clear_quarantine()
+
+
+def test_unavailable_model_is_recognised():
+    from app.llm import _is_model_unavailable
+
+    assert _is_model_unavailable(
+        Exception(
+            "The model `llama-3.1-8b-instant` does not exist or you do not "
+            "have access to it."
+        )
+    ) is True
+    assert _is_model_unavailable(Exception("429 Too Many Requests")) is False
+
+
+def test_unavailable_model_is_skipped_afterwards():
+    from app.llm import mark_model_unavailable, model_is_available
+
+    mark_model_unavailable("groq:retired-model")
+    assert model_is_available("groq:retired-model") is False
+    assert model_is_available("groq:working-model") is True
