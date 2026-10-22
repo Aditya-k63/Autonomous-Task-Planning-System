@@ -73,7 +73,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="use the scripted reference solver instead of a live model",
     )
+    parser.add_argument(
+        "--update-readme",
+        action="store_true",
+        help="regenerate the measured-results section of the README",
+    )
     args = parser.parse_args(argv)
+
+    if args.update_readme:
+        from eval.readme import update_readme
+
+        changed = update_readme()
+        print("[eval] README results updated" if changed else "[eval] README already up to date")
+        return 0
 
     if args.list_faults:
         for fault in ALL_FAULTS:
