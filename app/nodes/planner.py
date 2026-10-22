@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.state import AgentState, Task, TaskStatus, TaskPriority, AgentPhase
 from app.llm import get_llm, invoke_with_fallback
+from app.json_utils import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -97,35 +98,18 @@ def _planner_node_inner(state: AgentState) -> dict:
         raw = str(content).strip()
     logger.info(f"PLANNER raw response: {repr(raw[:500])}")
 
-    logger.info("PLANNER: step 6 - strip code fences")
-    # Strip markdown code fences if present
-    if "```" in raw:
-        parts = raw.split("```")
-        if len(parts) >= 3:
-            raw = parts[1].strip()
-            if raw.startswith(("json", "JSON")):
-                raw = raw[4:].strip()
-            if raw.endswith("```"):
-                raw = raw[:-3].strip()
-
-    logger.info("PLANNER: step 7 - extract JSON object")
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        raw = raw[start:end + 1]
-
-    logger.info(f"PLANNER: step 8 - parse JSON: {repr(raw[:200])}")
-    try:
-        data = json.loads(raw)
-        tasks_raw = data.get("tasks", [])
-        logger.info(f"PLANNER: step 9 - got {len(tasks_raw)} raw tasks")
-    except json.JSONDecodeError as e:
-        logger.error(f"PLANNER: JSON parse failed: {e}")
-        logger.error(f"PLANNER: raw content: {repr(raw[:500])}")
+    logger.info("PLANNER: step 6 - extract JSON")
+    data = extract_json_object(raw)
+    if data is None:
+        logger.error("PLANNER: JSON parse failed")
+        logger.error("PLANNER: raw content: %r", raw[:500])
         return {
             "phase": AgentPhase.ERROR.value,
             "error": f"Planner returned invalid JSON: {raw[:300]}",
         }
+
+    tasks_raw = data.get("tasks", [])
+    logger.info("PLANNER: step 9 - got %s raw tasks", len(tasks_raw))
 
     logger.info("PLANNER: step 10 - parse tasks")
     tasks: list[Task] = []

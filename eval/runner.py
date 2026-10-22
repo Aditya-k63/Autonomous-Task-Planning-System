@@ -223,7 +223,7 @@ def run_task(
             success=False,
             detail=f"harness error: {exc}",
             fault=fault.name if fault else None,
-            error=traceback.format_exc(limit=3),
+            error=traceback.format_exc(limit=20),
         )
     finally:
         set_workspace(None)

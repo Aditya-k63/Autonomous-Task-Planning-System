@@ -12,6 +12,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.state import AgentState, Task, TaskStatus, AgentPhase, Step
 from app.llm import get_llm, invoke_with_fallback
+from app.json_utils import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -78,34 +79,18 @@ Did this task succeed? Respond with JSON only."""),
     from app.nodes.executor import _record_usage
 
     _record_usage(state, response)
-    raw = response.content.strip()
+    raw = str(response.content).strip()
 
-    # Strip markdown fences
-    if "```" in raw:
-        parts = raw.split("```")
-        if len(parts) >= 3:
-            raw = parts[1].strip()
-            if raw.startswith(("json", "JSON")):
-                raw = raw[4:].strip()
-            if raw.endswith("```"):
-                raw = raw[:-3].strip()
-
-    # Extract JSON object
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        raw = raw[start:end + 1]
-
-    try:
-        data = json.loads(raw)
-        passed = data.get("pass", False)
-        score = data.get("score", 0.0)
-        reason = data.get("reason", "")
-    except json.JSONDecodeError:
+    data = extract_json_object(raw)
+    if data is None:
         logger.error(f"Reviewer returned invalid JSON: {raw[:300]}")
         passed = False
         score = 0.0
         reason = f"Review parse error: {raw[:300]}"
+    else:
+        passed = data.get("pass", False)
+        score = data.get("score", 0.0)
+        reason = data.get("reason", "")
 
     logger.info(f"REVIEWER: pass={passed}, score={score:.2f}, reason={reason[:100]}")
 

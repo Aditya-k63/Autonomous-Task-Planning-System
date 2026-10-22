@@ -82,6 +82,31 @@ def clear_quarantine() -> None:
     """Forget every quarantined endpoint."""
     _quarantine.clear()
 
+
+# Endpoints that have reported they cannot do tool calling. They are
+# still useful for the planner and the reviewer, which do not need
+# tools, so they are tracked separately from the rate-limit quarantine.
+_no_tool_support: set[str] = set()
+
+
+def supports_tool_calling(label: str) -> bool:
+    """Return False once an endpoint has said it cannot bind tools."""
+    return label not in _no_tool_support
+
+
+def mark_no_tool_support(label: str) -> None:
+    """Record that an endpoint cannot be used for tool calls."""
+    _no_tool_support.add(label)
+    logger.info("Endpoint %s does not support tool calling", label)
+
+
+def _is_tool_calling_unsupported(error: Exception) -> bool:
+    """Detect the provider error raised when a model cannot bind tools."""
+    text = str(error).lower()
+    return "tool calling" in text and (
+        "not supported" in text or "does not support" in text
+    )
+
 # Some providers state the wait explicitly, e.g. "Please try again in
 # 1m3.936s" or "in 4m0.624s" or "in 45s". The format is compound, so
 # hours, minutes, and seconds can all appear in one value.
@@ -240,6 +265,8 @@ def invoke_with_fallback(
     for spec in chain:
         if is_quarantined(spec.label):
             continue
+        if tools and not supports_tool_calling(spec.label):
+            continue
         try:
             client = _build_client(spec, settings)
         except Exception as e:  # missing client library for this provider
@@ -255,11 +282,13 @@ def invoke_with_fallback(
             return invoke_with_retry(client, messages, max_retries=max_retries)
         except Exception as e:
             last_error = e
-            if rate_limit_wait_hint(e) is not None:
+            if _is_tool_calling_unsupported(e):
+                mark_no_tool_support(spec.label)
+            elif rate_limit_wait_hint(e) is not None:
                 quarantine_endpoint(spec.label)
             logger.warning("Model %s failed: %s. Trying next endpoint.", spec.label, str(e)[:200])
     if last_error is None:
-        last_error = RuntimeError("Every configured endpoint is quarantined")
+        last_error = RuntimeError("Every configured endpoint is unavailable")
     raise RuntimeError(f"All LLM endpoints failed. Last error: {last_error}")
 
 
