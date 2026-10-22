@@ -43,12 +43,28 @@ def build_section(results_dir: Path = RESULTS_DIR) -> str:
 
     lines = ["## Measured results", ""]
     lines.append(
+        "The table below is produced by the **reference solver**, the "
+        "scripted agent that solves each task in one tool call. It is "
+        "deterministic, costs no tokens, and is what the CI gate runs — so "
+        "the number below is a regression baseline, not a claim about how "
+        "well the model does."
+    )
+    lines.append("")
+    lines.append(
         f"**{baseline.success}/{baseline.total} tasks solved "
         f"({baseline.success_rate * 100:.1f}%)**, "
         f"mean {baseline.mean_steps:.2f} steps and "
         f"{baseline.mean_tool_calls:.2f} tool calls per task, "
         f"{baseline.mean_wall_ms:,.0f} ms per task, "
         f"{baseline.mean_tokens_in:,.0f} input tokens per task."
+    )
+    lines.append("")
+    lines.append(
+        "Against a **live model** the same suite is harder and more "
+        "expensive: ~115,000 input tokens per pass, a median of ~56s per "
+        "task, and a success rate that depends on the model. That is the "
+        "number worth improving, and the harness is what tells you which "
+        "task to improve."
     )
     lines.append("")
 

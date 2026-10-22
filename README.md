@@ -158,7 +158,11 @@ the run records whether the agent obeyed it.
 <!-- EVAL_RESULTS:START -->
 ## Measured results
 
-**15/15 tasks solved (100.0%)**, mean 3.00 steps and 1.00 tool calls per task, 125 ms per task, 0 input tokens per task.
+The table below is produced by the **reference solver**, the scripted agent that solves each task in one tool call. It is deterministic, costs no tokens, and is what the CI gate runs — so the number below is a regression baseline, not a claim about how well the model does.
+
+**15/15 tasks solved (100.0%)**, mean 3.00 steps and 1.00 tool calls per task, 177 ms per task, 0 input tokens per task.
+
+Against a **live model** the same suite is harder and more expensive: ~115,000 input tokens per pass, a median of ~56s per task, and a success rate that depends on the model. That is the number worth improving, and the harness is what tells you which task to improve.
 
 Regenerate with `python -m eval.cli --baseline` and `python -m eval.cli --update-readme`. The full report, including per-task-kind breakdowns and failure detail, is written to `benchmarks/results/report.md`.
 
