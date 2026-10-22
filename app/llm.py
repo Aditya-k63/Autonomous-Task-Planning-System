@@ -227,8 +227,14 @@ def _chain(settings) -> list[ModelSpec]:
     )
 
 
-class AllEndpointsUnavailable(RuntimeError):
-    """Raised when every configured endpoint is blocked or rate-limited."""
+class ProviderUnavailable(RuntimeError):
+    """
+    Raised when no model endpoint can serve a request.
+
+    This covers both "nothing is configured" and "everything is blocked or
+    rate-limited". The harness treats it as an infrastructure error, so a
+    provider problem is never reported as the agent failing.
+    """
 
 
 def invoke_with_retry(llm, messages, max_retries: int = MAX_RETRIES):
@@ -285,7 +291,7 @@ def invoke_with_fallback(
     ``tools`` is an optional list of OpenAI-style function definitions. When
     given, the client is bound to them so the model can emit native tool
     calls. Returns the model response. Raises the last error if every
-    endpoint fails, or :class:`AllEndpointsUnavailable` when every
+    endpoint fails, or :class:`ProviderUnavailable` when every
     endpoint is blocked or rate-limited.
     """
     from app.config import get_settings
@@ -293,7 +299,7 @@ def invoke_with_fallback(
     settings = settings or get_settings()
     chain = _chain(settings)
     if not chain:
-        raise RuntimeError(
+        raise ProviderUnavailable(
             "No LLM provider configured. Set OPENROUTER_API_KEY, GROQ_API_KEY, "
             "or XAI_API_KEY."
         )
@@ -332,7 +338,7 @@ def invoke_with_fallback(
                 only_rate_limits = False
             logger.warning("Model %s failed: %s. Trying next endpoint.", spec.label, str(e)[:200])
     if last_error is None or only_rate_limits:
-        raise AllEndpointsUnavailable(
+        raise ProviderUnavailable(
             "Every configured endpoint is rate-limited or does not support "
             "tool calling. Wait for the quota to reset or add another provider."
         )

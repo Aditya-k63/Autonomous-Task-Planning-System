@@ -57,10 +57,16 @@ def test_infrastructure_errors_are_not_scored_as_failures():
     assert summary.infra_errors == 1
 
 
-def test_suite_stops_when_the_provider_is_unavailable():
+def test_suite_stops_when_the_provider_is_unavailable(monkeypatch):
     """Remaining tasks are marked as not attempted, not as failures."""
+    from eval import runner as runner_module
     from eval.runner import run_suite
     from eval.tasks import TASKS
+
+    # No provider configured, so the run cannot get off the ground. This
+    # must not depend on whether the machine running the tests happens to
+    # have an API key in its environment.
+    monkeypatch.setattr("app.llm._chain", lambda settings: [])
 
     results = run_suite(TASKS, token_budget=1)
     assert all(r.infra_error for r in results)

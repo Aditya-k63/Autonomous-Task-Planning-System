@@ -12,7 +12,7 @@ import logging
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 from app.state import Task, TaskStatus, AgentPhase, Clarification, ClarificationOption, Step, PermissionEvent
-from app.llm import get_llm, invoke_with_fallback, AllEndpointsUnavailable
+from app.llm import get_llm, invoke_with_fallback, ProviderUnavailable
 from app.context import trim_messages
 from app.permissions import get_policy
 from app.tools.output import isolate_output
@@ -100,7 +100,7 @@ def executor_node(state: dict) -> dict:
     logger.info("EXECUTOR: Starting task execution")
     try:
         return _executor_inner(state)
-    except AllEndpointsUnavailable:
+    except ProviderUnavailable:
         # An exhausted provider is not an execution failure. Let it reach
         # the harness so the run is reported as incomplete.
         raise

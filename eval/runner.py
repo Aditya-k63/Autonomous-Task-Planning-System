@@ -223,7 +223,7 @@ def run_task(
             tool_trace=trace,
         )
     except Exception as exc:  # a crash is a failure, not an abort
-        from app.llm import AllEndpointsUnavailable
+        from app.llm import ProviderUnavailable
 
         return TaskResult(
             task_id=task.id,
@@ -233,7 +233,7 @@ def run_task(
             detail=f"harness error: {exc}",
             fault=fault.name if fault else None,
             error=traceback.format_exc(limit=20),
-            infra_error=isinstance(exc, AllEndpointsUnavailable),
+            infra_error=isinstance(exc, ProviderUnavailable),
         )
     finally:
         set_workspace(None)
