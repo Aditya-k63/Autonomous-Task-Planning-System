@@ -31,8 +31,14 @@ RESPOND WITH ONLY valid JSON:
   "score": 0.0-1.0,
   "reason": "brief explanation",
   "suggestion": "if failed, what should be tried differently",
-  "retry": true/false
+  "retry": true/false,
+  "goal_satisfied": true/false
 }}
+
+"goal_satisfied" is true only when the ORIGINAL GOAL as a whole is now
+achieved, not merely this one task. If the goal asks for one file and
+that file now exists with the right contents, it is satisfied. If the goal
+has several parts and only one is done, it is not.
 
 Be lenient — if the task is substantially complete, mark it as passing.
 Only fail if the task clearly did not achieve its purpose.
@@ -91,6 +97,14 @@ Did this task succeed? Respond with JSON only."""),
         passed = data.get("pass", False)
         score = data.get("score", 0.0)
         reason = data.get("reason", "")
+
+    # The reviewer may report that the whole goal is already achieved,
+    # which lets the agent stop instead of grinding through the rest of
+    # an over-long plan.
+    goal_satisfied = bool(data.get("goal_satisfied", False)) if data else False
+    if goal_satisfied:
+        state["goal_satisfied"] = True
+        logger.info("REVIEWER: goal reported satisfied")
 
     logger.info(f"REVIEWER: pass={passed}, score={score:.2f}, reason={reason[:100]}")
 

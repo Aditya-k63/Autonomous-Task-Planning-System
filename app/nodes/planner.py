@@ -25,7 +25,8 @@ RULES:
 2. Define dependencies explicitly — which tasks must complete before others.
 3. Prioritize tasks (low/medium/high/critical).
 4. If the goal requires information you don't have, add a task that uses the web_search tool.
-5. Keep task count reasonable: 2-12 tasks maximum. Never exceed 12 tasks.
+5. Keep the plan as SHORT as possible. Most goals need 1-3 tasks. Only use more
+   when the goal genuinely has that many independent parts. Never exceed 12 tasks.
 6. Do NOT ask clarifying questions — just make reasonable assumptions.
 
 RESPOND WITH ONLY valid JSON (no markdown, no explanation):
