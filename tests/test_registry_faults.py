@@ -3,7 +3,13 @@
 import pytest
 
 from app.tools.output import OPEN_MARKER, isolate_output, strip_markers
-from app.tools.registry import CircuitBreaker, Tool, ToolRegistry, validate_input
+from app.tools.registry import (
+    CircuitBreaker,
+    Tool,
+    ToolRegistry,
+    validate_args,
+    validate_input,
+)
 
 
 def make_registry(**kwargs):
@@ -70,15 +76,24 @@ def test_circuit_breaker_resets_on_success():
     assert breaker.is_open("t") is False
 
 
-def test_schema_validation_rejects_bad_input():
+def test_schema_validation_rejects_bad_args():
+    """Structured arguments are validated against the tool's schema."""
     schema = {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}}
-    assert validate_input(schema, '{"other": 1}') is not None
-    assert validate_input(schema, '{"path": "a.txt"}') is None
+    assert validate_args(schema, {"other": 1}) is not None
+    assert validate_args(schema, {"path": "a.txt"}) is None
 
 
 def test_schema_validation_rejects_malformed_json():
+    """A string-typed schema rejects a value of the wrong shape."""
+    schema = {"type": "string", "minLength": 3}
+    assert validate_input(schema, "ab") is not None
+    assert validate_input(schema, "abc") is None
+
+
+def test_legacy_string_args_skip_object_schema_validation():
+    """Object schemas are validated on structured args, not the flat form."""
     schema = {"type": "object", "required": ["path"]}
-    assert "invalid JSON" in (validate_input(schema, "{not json") or "")
+    assert validate_input(schema, "not json at all") is None
 
 
 def test_registry_tracks_stats():

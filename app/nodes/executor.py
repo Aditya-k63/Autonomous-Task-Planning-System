@@ -18,16 +18,16 @@ from app.tools.output import isolate_output
 
 logger = logging.getLogger(__name__)
 
-EXECUTOR_SYSTEM = """You are a task executor. You execute one task at a time using available tools.
+EXECUTOR_SYSTEM = """You are a task executor. You execute one task at a time using the tools provided.
 
 AVAILABLE TOOLS:
 {tool_schemas}
 
 RULES:
 1. Execute the task described below using the tools above.
-2. Use tools by responding with EXACTLY this JSON format:
-   TOOL_CALL: {{"tool": "tool_name", "input": "input for tool"}}
-3. When the task is done, respond with:
+2. Call a tool by invoking the provided function. Prefer the function-call
+   interface over writing JSON by hand.
+3. When the task is done, respond with plain text:
    DONE: <summary of what was accomplished>
 4. If you need clarification from the user to proceed, respond with:
    CLARIFY: {{"question": "...", "context": "...", "options": [{{"id": "a", "label": "...", "description": "..."}}, ...]}}
@@ -55,7 +55,7 @@ Goal context: {goal}
 
 
 def _run_tool(
-    tool_name: str, tool_input: str, policy, task_id: str
+    tool_name: str, tool_input: str, policy, task_id: str, args: dict | None = None
 ) -> tuple[str, bool, dict]:
     """
     Run one tool call behind the permission gate.
@@ -79,7 +79,7 @@ def _run_tool(
     if not allowed:
         return f"ERROR: Permission denied. {reason}", True, event
 
-    raw_result = registry.execute(tool_name, tool_input)
+    raw_result = registry.execute(tool_name, tool_input, args=args)
     return isolate_output(raw_result), False, event
 
 
@@ -119,7 +119,7 @@ def _executor_inner(state: dict) -> dict:
         state["error"] = f"No task found with id={current_task_id}"
         return state
 
-    tool_schemas = json.dumps(registry.list_schemas(), indent=2)
+    tool_schemas = json.dumps(registry.list_prompt_schemas())
     system_msg = EXECUTOR_SYSTEM.format(
         tool_schemas=tool_schemas,
         task_description=current_task.description,
@@ -142,10 +142,45 @@ def _executor_inner(state: dict) -> dict:
     max_steps = 5
     steps_taken = 0
     new_history = list(history)
+    tool_defs = [t.to_openai_schema() for t in registry.list_tools()]
 
     while steps_taken < max_steps:
         messages.append(HumanMessage(content=f"Execute the task. ({steps_taken + 1}/{max_steps} steps remaining)"))
-        response = invoke_with_fallback(messages)
+        response = invoke_with_fallback(messages, tools=tool_defs)
+
+        # --- Native tool calls -----------------------------------------
+        native_calls = getattr(response, "tool_calls", None) or []
+        if native_calls:
+            for call in native_calls:
+                tool_name = call.get("name", "")
+                tool_args = call.get("args", {}) or {}
+                tool = registry.get(tool_name)
+                tool_input = tool.to_call_string(tool_args) if tool else str(tool_args)
+                logger.info(f"EXECUTOR: native tool call '{tool_name}' -> {tool_input[:100]}")
+                result, denied, event = _run_tool(
+                    tool_name, tool_input, policy, current_task.id, args=tool_args
+                )
+                permission_events.append(event)
+                messages.append(response)
+                messages.append(
+                    ToolMessage(
+                        content=result,
+                        tool_call_id=call.get("id", f"call_{steps_taken}"),
+                    )
+                )
+                steps_taken += 1
+                new_history.append(
+                    Step(
+                        task_id=current_task.id,
+                        action="tool_call",
+                        tool=tool_name,
+                        input=tool_input,
+                        output=result[:500],
+                        success=not denied,
+                    ).model_dump()
+                )
+            continue
+
         raw = response.content
         # Handle list content
         if isinstance(raw, list):

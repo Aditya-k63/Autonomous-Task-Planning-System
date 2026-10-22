@@ -25,9 +25,10 @@ OPENROUTER_MODELS: tuple[str, ...] = (
 )
 
 GROQ_MODELS: tuple[str, ...] = (
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
+    "qwen/qwen3.8-27b",
     "openai/gpt-oss-120b",
+    "allam-2-7b",
+    "openai/gpt-oss-20b",
 )
 
 XAI_MODELS: tuple[str, ...] = (

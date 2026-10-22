@@ -39,6 +39,14 @@ TRANSIENT_MARKERS = (
     "service unavailable",
 )
 
+# Some provider edges reject requests that carry a default library
+# User-Agent, so every client identifies itself as a normal HTTP client.
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+}
+
 
 def is_transient(error: Exception) -> bool:
     """Return True when the error looks worth retrying the same endpoint."""
@@ -57,6 +65,7 @@ def _build_client(spec: ModelSpec, settings) -> object:
             model=spec.model,
             temperature=0.3,
             max_tokens=4096,
+            default_headers=DEFAULT_HEADERS,
         )
     if spec.provider == "groq":
         from langchain_groq import ChatGroq
@@ -66,6 +75,7 @@ def _build_client(spec: ModelSpec, settings) -> object:
             model=spec.model,
             temperature=0.3,
             max_tokens=4096,
+            default_headers=DEFAULT_HEADERS,
         )
     if spec.provider == "xai":
         from langchain_openai import ChatOpenAI
@@ -76,6 +86,7 @@ def _build_client(spec: ModelSpec, settings) -> object:
             model=spec.model,
             temperature=0.3,
             max_tokens=4096,
+            default_headers=DEFAULT_HEADERS,
         )
     raise ValueError(f"Unknown provider: {spec.provider}")
 
@@ -118,11 +129,19 @@ def invoke_with_retry(llm, messages, max_retries: int = MAX_RETRIES):
     raise last_error  # pragma: no cover - defensive
 
 
-def invoke_with_fallback(messages, settings=None, max_retries: int = MAX_RETRIES):
+def invoke_with_fallback(
+    messages,
+    settings=None,
+    max_retries: int = MAX_RETRIES,
+    tools: list[dict[str, Any]] | None = None,
+):
     """
     Invoke the LLM, walking the fallback chain until one endpoint succeeds.
 
-    Returns the model response. Raises the last error if every endpoint fails.
+    ``tools`` is an optional list of OpenAI-style function definitions. When
+    given, the client is bound to them so the model can emit native tool
+    calls. Returns the model response. Raises the last error if every
+    endpoint fails.
     """
     from app.config import get_settings
 
@@ -142,6 +161,11 @@ def invoke_with_fallback(messages, settings=None, max_retries: int = MAX_RETRIES
             logger.warning("Skipping %s: %s", spec.label, e)
             continue
         try:
+            if tools:
+                try:
+                    client = client.bind_tools(tools)
+                except Exception as e:
+                    logger.warning("Tool binding unsupported on %s: %s", spec.label, e)
             logger.info("Using model %s", spec.label)
             return invoke_with_retry(client, messages, max_retries=max_retries)
         except Exception as e:

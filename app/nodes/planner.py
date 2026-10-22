@@ -73,7 +73,6 @@ def _planner_node_inner(state: AgentState) -> dict:
     logger.info("PLANNER: step 2 - get tools")
     from app.tools.registry import registry
     tools = ", ".join(t.name for t in registry.list_tools())
-
     logger.info("PLANNER: step 3 - build messages")
     system_msg = PLANNER_SYSTEM.format(tools=tools)
     messages = [

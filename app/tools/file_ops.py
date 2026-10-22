@@ -18,8 +18,14 @@ from app.workspace import current_workspace, resolve_in_workspace
 MAX_READ_CHARS = 10000
 MAX_WRITE_CHARS = 200000
 
-# JSON Schemas for input validation.
-STRING_SCHEMA: dict[str, Any] = {"type": "string"}
+
+def _schema(**kwargs) -> dict[str, Any]:
+    """Build an object schema for a tool."""
+    return {"type": "object", "additionalProperties": False, **kwargs}
+
+
+def _str(description: str) -> dict[str, Any]:
+    return {"type": "string", "description": description}
 
 
 def _read_file(path: str) -> str:
@@ -181,60 +187,94 @@ def get_file_tools() -> list[Tool]:
     return [
         Tool(
             "read_file",
-            "Read contents of a file. Input: file path relative to workspace.",
+            "Read the contents of a file in the workspace.",
             _read_file,
             safe=True,
-            input_schema=STRING_SCHEMA,
+            input_schema=_schema(
+                properties={"path": _str("File path relative to the workspace.")},
+                required=["path"],
+            ),
         ),
         Tool(
             "write_file",
-            "Write content to a file. Input: path\\ncontent (newline-separated).",
+            "Create a file or overwrite it with new content.",
             _write_file,
             safe=False,
             requires_confirmation=True,
-            input_schema=STRING_SCHEMA,
+            input_schema=_schema(
+                properties={
+                    "path": _str("File path relative to the workspace."),
+                    "content": _str("Full content to write to the file."),
+                },
+                required=["path", "content"],
+            ),
         ),
         Tool(
             "edit_file",
-            "Replace an exact string in a file. Input: path\\nold_string\\nnew_string.",
+            "Replace an exact string inside an existing file.",
             _edit_file,
             safe=False,
             requires_confirmation=True,
-            input_schema=STRING_SCHEMA,
+            input_schema=_schema(
+                properties={
+                    "path": _str("File path relative to the workspace."),
+                    "old_string": _str("Exact text to replace."),
+                    "new_string": _str("Replacement text."),
+                },
+                required=["path", "old_string", "new_string"],
+            ),
         ),
         Tool(
             "list_directory",
-            "List files and directories. Input: directory path (or '.' for root).",
+            "List the files and directories in a workspace directory.",
             _list_dir,
             safe=True,
-            input_schema=STRING_SCHEMA,
+            input_schema=_schema(
+                properties={"path": _str("Directory path, or '.' for the workspace root.")},
+                required=["path"],
+            ),
         ),
         Tool(
             "file_exists",
-            "Check if a file exists. Input: file path.",
+            "Check whether a path exists in the workspace.",
             _file_exists,
             safe=True,
-            input_schema=STRING_SCHEMA,
+            input_schema=_schema(
+                properties={"path": _str("Path relative to the workspace.")},
+                required=["path"],
+            ),
         ),
         Tool(
             "search_files",
-            "Regex search across all files. Input: regex pattern.",
+            "Regex search across every file in the workspace.",
             _search_in_files,
             safe=True,
-            input_schema=STRING_SCHEMA,
+            input_schema=_schema(
+                properties={"pattern": _str("Regular expression to search for.")},
+                required=["pattern"],
+            ),
         ),
         Tool(
             "glob",
-            "Find files matching a glob pattern. Input: pattern (e.g. '**/*.py').",
+            "Find files matching a glob pattern, for example '**/*.py'.",
             _glob,
             safe=True,
-            input_schema=STRING_SCHEMA,
+            input_schema=_schema(
+                properties={"pattern": _str("Glob pattern, for example '**/*.py'.")},
+                required=["pattern"],
+            ),
         ),
         Tool(
             "grep",
-            "Search file contents for a pattern. Input: pattern, optional second line with a file glob.",
+            "Search file contents for a pattern, optionally limited to a file glob.",
             _grep,
             safe=True,
-            input_schema=STRING_SCHEMA,
+            input_schema=_schema(
+                properties={
+                    "pattern": _str("Regular expression to search for."),
+                    "file_glob": _str("Optional glob limiting which files are searched, e.g. '*.py'."),
+                },
+                required=["pattern"],
+            ),
         ),
     ]

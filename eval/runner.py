@@ -28,8 +28,9 @@ from app.workspace import reset_workspace, set_workspace
 from eval.faults import ALL_FAULTS, Fault
 from eval.tasks import Task
 
-# A single task may not exceed this many seconds.
-TASK_TIMEOUT_SECONDS = 90.0
+# A single task may not exceed this many seconds. The limit is generous
+# because a free-tier provider can rate-limit for minutes at a time.
+TASK_TIMEOUT_SECONDS = 180.0
 
 
 @dataclass

@@ -44,6 +44,36 @@ class Tool:
             "input_schema": self.input_schema,
         }
 
+    def to_openai_schema(self) -> dict[str, Any]:
+        """Render the tool as an OpenAI-style function definition."""
+        parameters = self.input_schema or {"type": "string"}
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": parameters,
+            },
+        }
+
+    def to_call_string(self, args: dict[str, Any]) -> str:
+        """
+        Render structured arguments as the string the tool function takes.
+
+        Tools accept a single string argument. Native tool calls arrive as
+        a dict, so the declared properties are joined in schema order.
+        """
+        properties = (self.input_schema or {}).get("properties") or {}
+        if not properties:
+            return str(args.get("input", "") or args)
+        parts = []
+        for name in properties:
+            if name in args:
+                parts.append(str(args[name]))
+        if not parts:
+            return str(args.get("input", "") or args)
+        return "\n".join(parts)
+
     def execute(self, input_text: str) -> str:
         try:
             result = self.func(input_text)
@@ -86,9 +116,9 @@ class CircuitBreaker:
         self._opened_at.pop(name, None)
 
 
-def validate_input(schema: dict[str, Any], tool_input: str) -> str | None:
+def validate_args(schema: dict[str, Any], args: Any) -> str | None:
     """
-    Validate a tool argument string against a JSON Schema.
+    Validate structured tool arguments against a JSON Schema.
 
     Returns an error message when invalid, otherwise ``None``.
     """
@@ -99,11 +129,32 @@ def validate_input(schema: dict[str, Any], tool_input: str) -> str | None:
     except ImportError:
         return None
     try:
-        parsed = json.loads(tool_input) if schema.get("type") != "string" else tool_input
-    except json.JSONDecodeError as e:
-        return f"invalid JSON for tool input: {e}"
+        jsonschema.validate(args, schema)
+    except jsonschema.ValidationError as e:  # type: ignore[attr-defined]
+        return f"schema validation failed: {e.message}"
+    except jsonschema.SchemaError as e:  # type: ignore[attr-defined]
+        return f"schema is invalid: {e.message}"
+    return None
+
+
+def validate_input(schema: dict[str, Any], tool_input: str) -> str | None:
+    """
+    Validate a legacy string tool argument against a JSON Schema.
+
+    Only applies to string-typed schemas. Object-typed tools receive
+    structured arguments, which are validated by :func:`validate_args`
+    before they are flattened into the string form.
+    """
+    if not schema:
+        return None
+    if schema.get("type") != "string":
+        return None
     try:
-        jsonschema.validate(parsed, schema)
+        import jsonschema  # type: ignore
+    except ImportError:
+        return None
+    try:
+        jsonschema.validate(tool_input, schema)
     except jsonschema.ValidationError as e:  # type: ignore[attr-defined]
         return f"schema validation failed: {e.message}"
     return None
@@ -167,6 +218,23 @@ class ToolRegistry:
     def list_schemas(self) -> list[dict[str, Any]]:
         return [t.to_schema() for t in self.list_tools()]
 
+    def list_prompt_schemas(self) -> list[dict[str, Any]]:
+        """
+        Compact schemas for the model prompt.
+
+        The full schema carries safety metadata the model does not need,
+        and every token is resent on every call. This keeps only what the
+        model actually needs to call a tool.
+        """
+        return [
+            {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.input_schema or {"type": "string"},
+            }
+            for t in self.list_tools()
+        ]
+
     # -- stats --
 
     def _stat(self, name: str) -> dict[str, int]:
@@ -180,8 +248,16 @@ class ToolRegistry:
 
     # -- dispatch --
 
-    def execute(self, name: str, input_text: str) -> str:
-        """Validate, then run a tool with retries and a circuit breaker."""
+    def execute(
+        self, name: str, input_text: str, args: dict[str, Any] | None = None
+    ) -> str:
+        """
+        Validate, then run a tool with retries and a circuit breaker.
+
+        ``args`` carries the structured arguments a native tool call
+        supplied. When present they are validated against the tool's JSON
+        Schema before the tool runs.
+        """
         self._ensure_loaded()
         tool = self._tools.get(name)
         if tool is None:
@@ -196,7 +272,10 @@ class ToolRegistry:
                 "failures. Use a different approach or try again later."
             )
 
-        schema_error = validate_input(tool.input_schema, input_text)
+        if args is not None:
+            schema_error = validate_args(tool.input_schema, args)
+        else:
+            schema_error = validate_input(tool.input_schema, input_text)
         if schema_error:
             stat["failed"] += 1
             return f"ERROR: {schema_error}"

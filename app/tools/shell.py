@@ -119,9 +119,20 @@ def get_shell_tools() -> list[Tool]:
     return [
         Tool(
             "run_shell",
-            "Execute a shell command in the sandboxed workspace. Input: shell command string.",
+            "Execute a shell command inside the sandboxed workspace.",
             _run_shell,
             safe=False,
             requires_confirmation=True,
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to run, e.g. 'ls -la'.",
+                    }
+                },
+                "required": ["command"],
+            },
         ),
     ]
