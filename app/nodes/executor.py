@@ -13,6 +13,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Tool
 
 from app.state import Task, TaskStatus, AgentPhase, Clarification, ClarificationOption, Step, PermissionEvent
 from app.llm import get_llm, invoke_with_fallback
+from app.context import trim_messages
 from app.permissions import get_policy
 from app.tools.output import isolate_output
 
@@ -157,7 +158,12 @@ def _executor_inner(state: dict) -> dict:
 
     while steps_taken < max_steps:
         messages.append(HumanMessage(content=f"Execute the task. ({steps_taken + 1}/{max_steps} steps remaining)"))
-        response = invoke_with_fallback(messages, tools=tool_defs)
+        # Keep the context bounded: the system prompt and the tool
+        # schemas are resent on every call, so an unbounded history makes
+        # each step more expensive than the last.
+        response = invoke_with_fallback(
+            trim_messages(messages), tools=tool_defs
+        )
         _record_usage(state, response)
 
         # --- Native tool calls -----------------------------------------
